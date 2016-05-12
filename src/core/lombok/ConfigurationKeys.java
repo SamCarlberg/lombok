@@ -21,12 +21,12 @@
  */
 package lombok;
 
-import java.util.List;
-
 import lombok.core.configuration.CallSuperType;
 import lombok.core.configuration.ConfigurationKey;
 import lombok.core.configuration.FlagUsageType;
 import lombok.core.configuration.NullCheckExceptionType;
+
+import java.util.List;
 
 /**
  * A container class containing all lombok configuration keys that do not belong to a specific annotation.
@@ -238,6 +238,24 @@ public class ConfigurationKeys {
 	 * If set, <em>any</em> usage of {@code @Delegate} results in a warning / error.
 	 */
 	public static final ConfigurationKey<FlagUsageType> DELEGATE_FLAG_USAGE = new ConfigurationKey<FlagUsageType>("lombok.delegate.flagUsage", "Emit a warning or error if @Delegate is used.") {};
+
+	// ----- Min -----
+
+	/**
+	 * lombok configuration: {@code lombok.min.flagUsage} = {@code WARNING} | {@code ERROR}.
+	 *
+	 * If set, <em>any</em> usage of {@code @Min} results in a warning / error.
+	 */
+	public static final ConfigurationKey<FlagUsageType> MIN_FLAG_USAGE = new ConfigurationKey<FlagUsageType>("lombok.min.flagUsage", "Emit a warning or error if @Min is used.") {};
+
+	// ----- Max -----
+
+	/**
+	 * lombok configuration: {@code lombok.max.flagUsage} = {@code WARNING} | {@code ERROR}.
+	 *
+	 * If set, <em>any</em> usage of {@code @Max} results in a warning / error.
+	 */
+	public static final ConfigurationKey<FlagUsageType> MAX_FLAG_USAGE = new ConfigurationKey<FlagUsageType>("lombok.max.flagUsage", "Emit a warning or error if @Max is used.") {};
 	
 	// ----- NonNull -----
 	

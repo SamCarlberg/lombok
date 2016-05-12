@@ -232,7 +232,7 @@ public class JavacNode extends lombok.core.LombokNode<JavacAST, JavacNode, JCTre
 	 * Generates an compiler error focused on the AST node represented by this node object.
 	 */
 	public void addError(String message, DiagnosticPosition pos) {
-		ast.printMessage(Diagnostic.Kind.ERROR, message, null, pos, true);
+		ast.printMessage(Diagnostic.Kind.ERROR, message, this, pos, true);
 	}
 	
 	/**

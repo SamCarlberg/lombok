@@ -1158,6 +1158,62 @@ public class JavacHandlerUtil {
 		JCBlock throwBlock = maker.Block(0, List.of(throwStatement));
 		return maker.If(maker.Binary(CTC_EQUAL, maker.Ident(fieldName), maker.Literal(CTC_BOT, null)), throwBlock, null);
 	}
+
+	/**
+	 * Generates a new statement that checks if the given numeric variable has a value lower than the given
+	 * minimum value.
+     */
+	public static JCStatement generateMinCheck(JavacTreeMaker maker, JavacNode variable, double minValue) {
+		JCVariableDecl varDecl = (JCVariableDecl) variable.get();
+		Name fieldName = varDecl.name;
+		JCExpression exType = genTypeRef(variable, "java.lang.IllegalArgumentException");
+		JCExpression exception = maker.NewClass(null, List.<JCExpression>nil(), exType, List.<JCExpression>of(maker.Literal(String.format("Value of %s is below the minimum allowable value", fieldName))), null);
+		JCStatement throwStatement = maker.Throw(exception);
+		JCBlock throwBlock = maker.Block(0, List.of(throwStatement));
+		return maker.If(maker.Binary(CTC_LESS_THAN, maker.Ident(fieldName), maker.Literal(CTC_DOUBLE, minValue)), throwBlock, null);
+	}
+
+	/**
+	 * Generates a new statement that checks if the given numeric variable has a value lower than the given
+	 * minimum value.
+	 */
+	public static JCStatement generateMinCheck(JavacTreeMaker maker, JavacNode variable, JCExpression minValueExpr) {
+		JCVariableDecl varDecl = (JCVariableDecl) variable.get();
+		Name fieldName = varDecl.name;
+		JCExpression exType = genTypeRef(variable, "java.lang.IllegalArgumentException");
+		JCExpression exception = maker.NewClass(null, List.<JCExpression>nil(), exType, List.<JCExpression>of(maker.Literal(String.format("Value of %s is below the minimum allowable value", fieldName))), null);
+		JCStatement throwStatement = maker.Throw(exception);
+		JCBlock throwBlock = maker.Block(0, List.of(throwStatement));
+		return maker.If(maker.Binary(CTC_LESS_THAN, maker.Ident(fieldName), minValueExpr), throwBlock, null);
+	}
+
+	/**
+	 * Generates a new statement that checks if the given numeric variable has a value greater than the given
+	 * maximum value.
+	 */
+	public static JCStatement generateMaxCheck(JavacTreeMaker maker, JavacNode variable, double maxValue) {
+		JCVariableDecl varDecl = (JCVariableDecl) variable.get();
+		Name fieldName = varDecl.name;
+		JCExpression exType = genTypeRef(variable, "java.lang.IllegalArgumentException");
+		JCExpression exception = maker.NewClass(null, List.<JCExpression>nil(), exType, List.<JCExpression>of(maker.Literal(String.format("Value of %s is above the maximum allowable value", fieldName))), null);
+		JCStatement throwStatement = maker.Throw(exception);
+		JCBlock throwBlock = maker.Block(0, List.of(throwStatement));
+		return maker.If(maker.Binary(CTC_GREATER_THAN, maker.Ident(fieldName), maker.Literal(CTC_DOUBLE, maxValue)), throwBlock, null);
+	}
+
+	/**
+	 * Generates a new statement that checks if the given numeric variable has a value higher than the given
+	 * minimum value.
+	 */
+	public static JCStatement generateMaxCheck(JavacTreeMaker maker, JavacNode variable, JCExpression maxValueExpr) {
+		JCVariableDecl varDecl = (JCVariableDecl) variable.get();
+		Name fieldName = varDecl.name;
+		JCExpression exType = genTypeRef(variable, "java.lang.IllegalArgumentException");
+		JCExpression exception = maker.NewClass(null, List.<JCExpression>nil(), exType, List.<JCExpression>of(maker.Literal(String.format("Value of %s is above the maximum allowable value", fieldName))), null);
+		JCStatement throwStatement = maker.Throw(exception);
+		JCBlock throwBlock = maker.Block(0, List.of(throwStatement));
+		return maker.If(maker.Binary(CTC_GREATER_THAN, maker.Ident(fieldName), maxValueExpr), throwBlock, null);
+	}
 	
 	/**
 	 * Given a list of field names and a node referring to a type, finds each name in the list that does not match a field within the type.

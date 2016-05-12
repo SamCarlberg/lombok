@@ -36,6 +36,7 @@ import javax.lang.model.type.NoType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeVisitor;
 
+import com.sun.tools.javac.code.Symbol;
 import lombok.javac.JavacTreeMaker.TreeTag;
 import lombok.javac.JavacTreeMaker.TypeTag;
 
@@ -49,6 +50,7 @@ import com.sun.tools.javac.tree.JCTree.JCExpression;
 import com.sun.tools.javac.tree.JCTree.JCFieldAccess;
 import com.sun.tools.javac.tree.JCTree.JCIdent;
 import com.sun.tools.javac.tree.JCTree.JCLiteral;
+import com.sun.tools.javac.tree.JCTree.JCUnary;
 import com.sun.tools.javac.util.JCDiagnostic.DiagnosticPosition;
 
 /**
@@ -127,7 +129,7 @@ public class Javac {
 	}
 	
 	/**
-	 * Turns an expression into a guessed intended literal. Only works for
+	 * Turns an expression into a guessed intended literal or negative literal number. Only works for
 	 * literals, as you can imagine.
 	 * 
 	 * Will for example turn a TrueLiteral into 'Boolean.valueOf(true)'.
@@ -139,6 +141,30 @@ public class Javac {
 				return ((Number) lit.value).intValue() == 0 ? false : true;
 			}
 			return lit.value;
+		} else if (expr instanceof JCUnary) {
+			// possible negative number (e.g. '-1') which doesn't count as a literal
+			JCUnary unary = (JCUnary) expr;
+			Symbol.OperatorSymbol operator = (Symbol.OperatorSymbol) unary.getOperator();
+			JCExpression arg = unary.arg;
+			switch (operator.opcode) {
+				case 0x74: // ineg
+					if (arg instanceof JCLiteral) {
+						return -((Integer) ((JCLiteral) arg).value);
+					}
+				case 0x75: // lneg
+					if (arg instanceof JCLiteral) {
+						return -((Long) ((JCLiteral) arg).value);
+					}
+				case 0x76: // fneg
+					if (arg instanceof JCLiteral) {
+						return -((Float) ((JCLiteral) arg).value);
+					}
+				case 0x77: // dneg
+					if (arg instanceof JCLiteral) {
+						return -((Double) ((JCLiteral) arg).value);
+					}
+			}
+			return null;
 		} else if (expr instanceof JCIdent || expr instanceof JCFieldAccess) {
 			String x = expr.toString();
 			if (x.endsWith(".class")) x = x.substring(0, x.length() - 6);

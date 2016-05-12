@@ -21,14 +21,6 @@
  */
 package lombok.core.handlers;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.regex.Pattern;
-
 import lombok.AllArgsConstructor;
 import lombok.ConfigurationKeys;
 import lombok.Data;
@@ -48,6 +40,14 @@ import lombok.core.configuration.FlagUsageType;
 import lombok.experimental.Accessors;
 import lombok.experimental.FieldDefaults;
 import lombok.experimental.Wither;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Container for static utility methods useful for some of the standard lombok handlers, regardless of
@@ -210,6 +210,9 @@ public class HandlerUtil {
 	
 	/** Matches the simple part of any annotation that lombok considers as indicative of Nullable status. */
 	public static final Pattern NULLABLE_PATTERN = Pattern.compile("^(?:nullable|checkfornull)$", Pattern.CASE_INSENSITIVE);
+
+	/** Matches the simple part of any annotation that lombok considers as indicative of a range check status*/
+	public static final Pattern RANGE_PATTERN = Pattern.compile("^(?:min|max|range)$", Pattern.CASE_INSENSITIVE);
 	
 	public static final String DEFAULT_EXCEPTION_FOR_NON_NULL = "java.lang.NullPointerException";
 	

@@ -21,12 +21,22 @@
  */
 package lombok.javac.handlers;
 
-import static lombok.javac.Javac.*;
-import static lombok.core.handlers.HandlerUtil.*;
-import static lombok.javac.handlers.JavacHandlerUtil.*;
-
-import java.util.Collection;
-
+import com.sun.tools.javac.code.Flags;
+import com.sun.tools.javac.tree.JCTree.JCAnnotation;
+import com.sun.tools.javac.tree.JCTree.JCAssign;
+import com.sun.tools.javac.tree.JCTree.JCBlock;
+import com.sun.tools.javac.tree.JCTree.JCClassDecl;
+import com.sun.tools.javac.tree.JCTree.JCExpression;
+import com.sun.tools.javac.tree.JCTree.JCLiteral;
+import com.sun.tools.javac.tree.JCTree.JCMethodDecl;
+import com.sun.tools.javac.tree.JCTree.JCNewArray;
+import com.sun.tools.javac.tree.JCTree.JCReturn;
+import com.sun.tools.javac.tree.JCTree.JCStatement;
+import com.sun.tools.javac.tree.JCTree.JCTypeParameter;
+import com.sun.tools.javac.tree.JCTree.JCVariableDecl;
+import com.sun.tools.javac.util.List;
+import com.sun.tools.javac.util.ListBuffer;
+import com.sun.tools.javac.util.Name;
 import lombok.AccessLevel;
 import lombok.ConfigurationKeys;
 import lombok.Setter;
@@ -36,24 +46,16 @@ import lombok.javac.Javac;
 import lombok.javac.JavacAnnotationHandler;
 import lombok.javac.JavacNode;
 import lombok.javac.JavacTreeMaker;
-import lombok.javac.handlers.JavacHandlerUtil.FieldAccess;
-
+import lombok.javac.handlers.JavacHandlerUtil.*;
 import org.mangosdk.spi.ProviderFor;
 
-import com.sun.tools.javac.code.Flags;
-import com.sun.tools.javac.tree.JCTree.JCAnnotation;
-import com.sun.tools.javac.tree.JCTree.JCAssign;
-import com.sun.tools.javac.tree.JCTree.JCBlock;
-import com.sun.tools.javac.tree.JCTree.JCClassDecl;
-import com.sun.tools.javac.tree.JCTree.JCExpression;
-import com.sun.tools.javac.tree.JCTree.JCMethodDecl;
-import com.sun.tools.javac.tree.JCTree.JCReturn;
-import com.sun.tools.javac.tree.JCTree.JCStatement;
-import com.sun.tools.javac.tree.JCTree.JCTypeParameter;
-import com.sun.tools.javac.tree.JCTree.JCVariableDecl;
-import com.sun.tools.javac.util.List;
-import com.sun.tools.javac.util.ListBuffer;
-import com.sun.tools.javac.util.Name;
+import java.util.Collection;
+
+import static lombok.core.handlers.HandlerUtil.*;
+import static lombok.javac.Javac.*;
+import static lombok.javac.handlers.JavacHandlerUtil.*;
+import static lombok.javac.handlers.JavacHandlerUtil.toAllSetterNames;
+import static lombok.javac.handlers.JavacHandlerUtil.toSetterName;
 
 /**
  * Handles the {@code lombok.Setter} annotation for javac.
@@ -208,12 +210,60 @@ public class HandleSetter extends JavacAnnotationHandler<Setter> {
 		ListBuffer<JCStatement> statements = new ListBuffer<JCStatement>();
 		List<JCAnnotation> nonNulls = findAnnotations(field, NON_NULL_PATTERN);
 		List<JCAnnotation> nullables = findAnnotations(field, NULLABLE_PATTERN);
+		List<JCAnnotation> rangeChecks = findAnnotations(field, RANGE_PATTERN);
 		
 		Name methodName = field.toName(setterName);
-		List<JCAnnotation> annsOnParam = copyAnnotations(onParam).appendList(nonNulls).appendList(nullables);
+		List<JCAnnotation> annsOnParam = copyAnnotations(onParam).appendList(nonNulls).appendList(nullables).appendList(rangeChecks);
 		
 		long flags = JavacHandlerUtil.addFinalIfNeeded(Flags.PARAMETER, field.getContext());
 		JCVariableDecl param = treeMaker.VarDef(treeMaker.Modifiers(flags, annsOnParam), fieldDecl.name, fieldDecl.vartype, null);
+
+		boolean hasRange = false;
+		for (JCAnnotation a : rangeChecks) {
+			if (a.toString().toLowerCase().startsWith("@range")) {
+				hasRange = true;
+			}
+		}
+
+		for (JCAnnotation rangeAnn : rangeChecks) {
+			String annString = rangeAnn.toString();
+			if (annString.startsWith("@Min")) {
+				// don't generate if @Range is present
+				if (hasRange) {
+					field.addWarning("Not generating lower bound check; @Range is present");
+					continue;
+				}
+				JCExpression arg = rangeAnn.getArguments().get(0);
+				JCStatement minCheck = generateMinCheck(treeMaker, field, ((JCAssign) arg).rhs);
+				if (minCheck != null) statements.append(minCheck);
+			} else if (annString.startsWith("@Max")) {
+				// don't generate if @Range is present
+				if (hasRange) {
+					field.addWarning("Not generating upper bound check; @Range is present");
+					continue;
+				}
+				JCExpression arg = rangeAnn.getArguments().get(0);
+				JCStatement maxCheck = generateMaxCheck(treeMaker, field, ((JCAssign) arg).rhs);
+				if (maxCheck != null) statements.append(maxCheck);
+			} else if (annString.startsWith("@Range")) {
+				JCExpression arg = rangeAnn.getArguments().get(0); // "value = {min, max}"
+				List<JCExpression> elements = ((JCNewArray) ((JCAssign) arg).rhs).elems;
+				if (elements.size() != 2) {
+					field.addError(String.format("Must have exactly two values for @Range (given:%d)", elements.size()));
+				} else {
+					Number min = (Number) ((JCLiteral) elements.get(0)).getValue();
+					Number max = (Number) ((JCLiteral) elements.get(1)).getValue();
+					if (min.doubleValue() >= max.doubleValue()) {
+						field.addError("Min value must be less than max value");
+						continue;
+					}
+					JCStatement maxCheck = generateMaxCheck(treeMaker, field, max.doubleValue());
+					if (maxCheck != null) statements.append(maxCheck);
+					JCStatement minCheck = generateMinCheck(treeMaker, field, min.doubleValue());
+					if (minCheck != null) statements.append(minCheck);
+				}
+			}
+		}
 		
 		if (nonNulls.isEmpty()) {
 			statements.append(treeMaker.Exec(assign));
