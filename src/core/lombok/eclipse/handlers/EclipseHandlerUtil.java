@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 The Project Lombok Authors.
+ * Copyright (C) 2009-2017 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -167,6 +167,7 @@ public class EclipseHandlerUtil {
 	}
 	
 	public static boolean isFieldDeprecated(EclipseNode fieldNode) {
+		if (!(fieldNode.get() instanceof FieldDeclaration)) return false;
 		FieldDeclaration field = (FieldDeclaration) fieldNode.get();
 		if ((field.modifiers & ClassFileConstants.AccDeprecated) != 0) {
 			return true;
@@ -440,6 +441,24 @@ public class EclipseHandlerUtil {
 			// intentional fallthrough
 		default:
 			return false;
+		}
+	}
+	
+	public static EclipseNode findAnnotation(Class<? extends java.lang.annotation.Annotation> type, EclipseNode node) {
+		if (node == null) return null;
+		if (type == null) return null;
+		switch (node.getKind()) {
+		case ARGUMENT:
+		case FIELD:
+		case LOCAL:
+		case TYPE:
+		case METHOD:
+			for (EclipseNode child : node.down()) {
+				if (annotationTypeMatches(type, child)) return child;
+			}
+			// intentional fallthrough
+		default:
+			return null;
 		}
 	}
 	
@@ -1168,9 +1187,8 @@ public class EclipseHandlerUtil {
 							if (params < minArgs || params > maxArgs) continue;
 						}
 						
-						if (def.annotations != null) for (Annotation anno : def.annotations) {
-							if (typeMatches(Tolerate.class, node, anno.type)) continue top;
-						}
+						
+						if (isTolerate(node, def)) continue top;
 						
 						return getGeneratedBy(def) == null ? MemberExistsResult.EXISTS_BY_USER : MemberExistsResult.EXISTS_BY_LOMBOK;
 					}
@@ -1179,6 +1197,13 @@ public class EclipseHandlerUtil {
 		}
 		
 		return MemberExistsResult.NOT_EXISTS;
+	}
+	
+	public static boolean isTolerate(EclipseNode node, AbstractMethodDeclaration def) {
+		if (def.annotations != null) for (Annotation anno : def.annotations) {
+			if (typeMatches(Tolerate.class, node, anno.type)) return true;
+		}
+		return false;
 	}
 	
 	/**
@@ -1194,13 +1219,11 @@ public class EclipseHandlerUtil {
 		
 		if (node != null && node.get() instanceof TypeDeclaration) {
 			TypeDeclaration typeDecl = (TypeDeclaration)node.get();
-			if (typeDecl.methods != null) top: for (AbstractMethodDeclaration def : typeDecl.methods) {
+			if (typeDecl.methods != null) for (AbstractMethodDeclaration def : typeDecl.methods) {
 				if (def instanceof ConstructorDeclaration) {
 					if ((def.bits & ASTNode.IsDefaultConstructor) != 0) continue;
 					
-					if (def.annotations != null) for (Annotation anno : def.annotations) {
-						if (typeMatches(Tolerate.class, node, anno.type)) continue top;
-					}
+					if (isTolerate(node, def)) continue;
 					
 					return getGeneratedBy(def) == null ? MemberExistsResult.EXISTS_BY_USER : MemberExistsResult.EXISTS_BY_LOMBOK;
 				}
@@ -1325,6 +1348,7 @@ public class EclipseHandlerUtil {
 	private static final char[] GENERATED_CODE = "generated code".toCharArray();
 	private static final char[] LOMBOK = "lombok".toCharArray();
 	private static final char[][] JAVAX_ANNOTATION_GENERATED = Eclipse.fromQualifiedName("javax.annotation.Generated");
+	private static final char[][] LOMBOK_GENERATED = Eclipse.fromQualifiedName("lombok.Generated");
 	private static final char[][] EDU_UMD_CS_FINDBUGS_ANNOTATIONS_SUPPRESSFBWARNINGS = Eclipse.fromQualifiedName("edu.umd.cs.findbugs.annotations.SuppressFBWarnings");
 	
 	public static Annotation[] addSuppressWarningsAll(EclipseNode node, ASTNode source, Annotation[] originalAnnotationArray) {
@@ -1339,24 +1363,29 @@ public class EclipseHandlerUtil {
 	}
 	
 	public static Annotation[] addGenerated(EclipseNode node, ASTNode source, Annotation[] originalAnnotationArray) {
-		if (Boolean.FALSE.equals(node.getAst().readConfiguration(ConfigurationKeys.ADD_GENERATED_ANNOTATIONS))) return originalAnnotationArray;
-		return addAnnotation(source, originalAnnotationArray, JAVAX_ANNOTATION_GENERATED, new StringLiteral(LOMBOK, 0, 0, 0));
+		Annotation[] result = originalAnnotationArray;
+		if (HandlerUtil.shouldAddGenerated(node)) {
+			result = addAnnotation(source, result, JAVAX_ANNOTATION_GENERATED, new StringLiteral(LOMBOK, 0, 0, 0));
+		}
+		if (Boolean.TRUE.equals(node.getAst().readConfiguration(ConfigurationKeys.ADD_LOMBOK_GENERATED_ANNOTATIONS))) {
+			result = addAnnotation(source, result, LOMBOK_GENERATED, null);
+		}
+		return result;
 	}
 	
 	private static Annotation[] addAnnotation(ASTNode source, Annotation[] originalAnnotationArray, char[][] annotationTypeFqn, ASTNode arg) {
 		char[] simpleName = annotationTypeFqn[annotationTypeFqn.length - 1];
 		
 		if (originalAnnotationArray != null) for (Annotation ann : originalAnnotationArray) {
-			char[] lastToken = null;
-			
 			if (ann.type instanceof QualifiedTypeReference) {
 				char[][] t = ((QualifiedTypeReference) ann.type).tokens;
-				lastToken = t[t.length - 1];
-			} else if (ann.type instanceof SingleTypeReference) {
-				lastToken = ((SingleTypeReference) ann.type).token;
+				if (Arrays.deepEquals(t, annotationTypeFqn)) return originalAnnotationArray;
 			}
 			
-			if (lastToken != null && Arrays.equals(simpleName, lastToken)) return originalAnnotationArray;
+			if (ann.type instanceof SingleTypeReference) {
+				char[] lastToken = ((SingleTypeReference) ann.type).token;
+				if (Arrays.equals(lastToken, simpleName)) return originalAnnotationArray;
+			}
 		}
 		
 		int pS = source.sourceStart, pE = source.sourceEnd;
@@ -1606,6 +1635,14 @@ public class EclipseHandlerUtil {
 		return true;
 	}
 	
+	public static void addError(String errorName, EclipseNode node) {
+		if (node.getLatestJavaSpecSupported() < 8) {
+			node.addError("The correct format is " + errorName + "_={@SomeAnnotation, @SomeOtherAnnotation})");
+		} else {
+			node.addError("The correct format is " + errorName + "=@__({@SomeAnnotation, @SomeOtherAnnotation}))");
+		}
+	}
+	
 	public static List<Annotation> unboxAndRemoveAnnotationParameter(Annotation annotation, String annotationName, String errorName, EclipseNode errorNode) {
 		if ("value".equals(annotationName)) {
 			// We can't unbox this, because SingleMemberAnnotation REQUIRES a value, and this method
@@ -1628,51 +1665,70 @@ public class EclipseHandlerUtil {
 		
 		char[] nameAsCharArray = annotationName.toCharArray();
 		
+		top:
 		for (int i = 0; i < pairs.length; i++) {
-			if (pairs[i].name == null || !Arrays.equals(nameAsCharArray, pairs[i].name)) continue;
+			boolean allowRaw;
+			char[] name = pairs[i].name;
+			if (name == null) continue;
+			if (name.length < nameAsCharArray.length) continue;
+			for (int j = 0; j < nameAsCharArray.length; j++) {
+				if (name[j] != nameAsCharArray[j]) continue top;
+			}
+			allowRaw = name.length > nameAsCharArray.length;
+			for (int j = nameAsCharArray.length; j < name.length; j++) {
+				if (name[j] != '_') continue top;
+			}
+			// If we're still here it's the targeted annotation param.
 			Expression value = pairs[i].value;
 			MemberValuePair[] newPairs = new MemberValuePair[pairs.length - 1];
 			if (i > 0) System.arraycopy(pairs, 0, newPairs, 0, i);
 			if (i < pairs.length - 1) System.arraycopy(pairs, i + 1, newPairs, i, pairs.length - i - 1);
 			normalAnnotation.memberValuePairs = newPairs;
-			// We have now removed the annotation parameter and stored '@__({... annotations ...})',
-			// which we must now unbox.
-			if (!(value instanceof Annotation)) {
-				errorNode.addError("The correct format is " + errorName + "@__({@SomeAnnotation, @SomeOtherAnnotation}))");
-				return Collections.emptyList();
-			}
-			
-			Annotation atDummyIdentifier = (Annotation) value;
-			if (!(atDummyIdentifier.type instanceof SingleTypeReference) ||
-					!isAllValidOnXCharacters(((SingleTypeReference) atDummyIdentifier.type).token)) {
-				errorNode.addError("The correct format is " + errorName + "@__({@SomeAnnotation, @SomeOtherAnnotation}))");
-				return Collections.emptyList();
-			}
-			
-			if (atDummyIdentifier instanceof MarkerAnnotation) {
-				// It's @Getter(onMethod=@__). This is weird, but fine.
-				return Collections.emptyList();
-			}
+			// We have now removed the annotation parameter and stored the value,
+			// which we must now unbox. It's either annotations, or @__(annotations).
 			
 			Expression content = null;
 			
-			if (atDummyIdentifier instanceof NormalAnnotation) {
-				MemberValuePair[] mvps = ((NormalAnnotation) atDummyIdentifier).memberValuePairs;
-				if (mvps == null || mvps.length == 0) {
-					// It's @Getter(onMethod=@__()). This is weird, but fine.
+			if (value instanceof ArrayInitializer) {
+				if (!allowRaw) {
+					addError(errorName, errorNode);
 					return Collections.emptyList();
 				}
-				if (mvps.length == 1 && Arrays.equals("value".toCharArray(), mvps[0].name)) {
-					content = mvps[0].value;
+				content = value;
+			} else if (!(value instanceof Annotation)) {
+				addError(errorName, errorNode);
+				return Collections.emptyList();
+			} else {
+				Annotation atDummyIdentifier = (Annotation) value;
+				if (atDummyIdentifier.type instanceof SingleTypeReference && isAllValidOnXCharacters(((SingleTypeReference) atDummyIdentifier.type).token)) {
+					if (atDummyIdentifier instanceof MarkerAnnotation) {
+						return Collections.emptyList();
+					} else if (atDummyIdentifier instanceof NormalAnnotation) {
+						MemberValuePair[] mvps = ((NormalAnnotation) atDummyIdentifier).memberValuePairs;
+						if (mvps == null || mvps.length == 0) {
+							return Collections.emptyList();
+						}
+						if (mvps.length == 1 && Arrays.equals("value".toCharArray(), mvps[0].name)) {
+							content = mvps[0].value;
+						}
+					} else if (atDummyIdentifier instanceof SingleMemberAnnotation) {
+						content = ((SingleMemberAnnotation) atDummyIdentifier).memberValue;
+					} else {
+						addError(errorName, errorNode);
+						return Collections.emptyList();
+					}
+				} else {
+					if (allowRaw) {
+						content = atDummyIdentifier;
+					} else {
+						addError(errorName, errorNode);
+						return Collections.emptyList();
+					}
 				}
-			}
-			
-			if (atDummyIdentifier instanceof SingleMemberAnnotation) {
-				content = ((SingleMemberAnnotation) atDummyIdentifier).memberValue;
 			}
 			
 			if (content == null) {
-				errorNode.addError("The correct format is " + errorName + "@__({@SomeAnnotation, @SomeOtherAnnotation}))");
+				addError(errorName, errorNode);
 				return Collections.emptyList();
 			}
 			
@@ -1684,13 +1740,13 @@ public class EclipseHandlerUtil {
 				if (expressions != null) for (Expression ex : expressions) {
 					if (ex instanceof Annotation) result.add((Annotation) ex);
 					else {
-						errorNode.addError("The correct format is " + errorName + "@__({@SomeAnnotation, @SomeOtherAnnotation}))");
+						addError(errorName, errorNode);
 						return Collections.emptyList();
 					}
 				}
 				return result;
 			} else {
-				errorNode.addError("The correct format is " + errorName + "@__({@SomeAnnotation, @SomeOtherAnnotation}))");
+				addError(errorName, errorNode);
 				return Collections.emptyList();
 			}
 		}

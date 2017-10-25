@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 The Project Lombok Authors.
+ * Copyright (C) 2009-2017 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -67,7 +67,6 @@ import com.sun.tools.javac.util.Context;
  */
 @SupportedAnnotationTypes("*")
 public class LombokProcessor extends AbstractProcessor {
-
 	private JavacProcessingEnvironment processingEnv;
 	private JavacTransformer transformer;
 	private Trees trees;
@@ -82,9 +81,10 @@ public class LombokProcessor extends AbstractProcessor {
 		}
 		
 		this.processingEnv = (JavacProcessingEnvironment) procEnv;
+		
 		placePostCompileAndDontMakeForceRoundDummiesHook();
-		transformer = new JavacTransformer(procEnv.getMessager());
 		trees = Trees.instance(procEnv);
+		transformer = new JavacTransformer(procEnv.getMessager(), trees);
 		SortedSet<Long> p = transformer.getPriorities();
 		if (p.isEmpty()) {
 			this.priorityLevels = new long[] {0L};
@@ -94,6 +94,50 @@ public class LombokProcessor extends AbstractProcessor {
 			int i = 0;
 			for (Long prio : p) this.priorityLevels[i++] = prio;
 			this.priorityLevelsRequiringResolutionReset = transformer.getPrioritiesRequiringResolutionReset();
+		}
+	}
+	
+	private static final String JPE = "com.sun.tools.javac.processing.JavacProcessingEnvironment";
+	private static final Field javacProcessingEnvironment_discoveredProcs = getFieldAccessor(JPE, "discoveredProcs");
+	private static final Field discoveredProcessors_procStateList = getFieldAccessor(JPE + "$DiscoveredProcessors", "procStateList");
+	private static final Field processorState_processor = getFieldAccessor(JPE + "$processor", "processor");
+	
+	private static final Field getFieldAccessor(String typeName, String fieldName) {
+		try {
+			Class<?> c = Class.forName(typeName);
+			Field f = c.getDeclaredField(fieldName);
+			f.setAccessible(true);
+			return f;
+		} catch (ClassNotFoundException e) {
+			return null;
+		} catch (NoSuchFieldException e) {
+			return null;
+		}
+	}
+	
+	// The intent of this method is to have lombok emit a warning if it's not 'first in line'. However, pragmatically speaking, you're always looking at one of two cases:
+	// (A) The other processor(s) running before lombok require lombok to have run or they crash. So, they crash, and unfortunately we are never even init-ed; the warning is never emitted.
+	// (B) The other processor(s) don't care about it at all. So, it doesn't actually matter that lombok isn't first.
+	// Hence, for now, no warnings.
+	@SuppressWarnings("unused")
+	private String listAnnotationProcessorsBeforeOurs() {
+		try {
+			Object discoveredProcessors = javacProcessingEnvironment_discoveredProcs.get(this.processingEnv);
+			ArrayList<?> states = (ArrayList<?>) discoveredProcessors_procStateList.get(discoveredProcessors);
+			if (states == null || states.isEmpty()) return null;
+			if (states.size() == 1) return processorState_processor.get(states.get(0)).getClass().getName();
+			
+			int idx = 0;
+			StringBuilder out = new StringBuilder();
+			for (Object processState : states) {
+				idx++;
+				String name = processorState_processor.get(processState).getClass().getName();
+				if (out.length() > 0) out.append(", ");
+				out.append("[").append(idx).append("] ").append(name);
+			}
+			return out.toString();
+		} catch (Exception e) {
+			return null;
 		}
 	}
 	

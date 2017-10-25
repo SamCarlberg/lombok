@@ -23,6 +23,7 @@ class GetterLazyEahcToString {
 	@java.lang.SuppressWarnings("all")
 	
 	@javax.annotation.Generated("lombok")
+	
 	protected boolean canEqual(final java.lang.Object other) {
 		return other instanceof GetterLazyEahcToString;
 	}
@@ -50,6 +51,7 @@ class GetterLazyEahcToString {
 	@java.lang.SuppressWarnings("all")
 	
 	@javax.annotation.Generated("lombok")
+	
 	public String getValue() {
 		java.lang.Object value = this.value.get();
 		if (value == null) {

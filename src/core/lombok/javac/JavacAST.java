@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 The Project Lombok Authors.
+ * Copyright (C) 2009-2017 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -28,6 +28,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import javax.annotation.processing.Messager;
 import javax.tools.Diagnostic;
@@ -63,12 +65,12 @@ import com.sun.tools.javac.util.Name;
  * something javac's own AST system does not offer.
  */
 public class JavacAST extends AST<JavacAST, JavacNode, JCTree> {
-	private final Messager messager;
 	private final JavacElements elements;
 	private final JavacTreeMaker treeMaker;
 	private final Symtab symtab;
 	private final JavacTypes javacTypes;
 	private final Log log;
+	private final ErrorLog errorLogger;
 	private final Context context;
 	
 	/**
@@ -79,11 +81,11 @@ public class JavacAST extends AST<JavacAST, JavacNode, JCTree> {
 	 * @param top The compilation unit, which serves as the top level node in the tree to be built.
 	 */
 	public JavacAST(Messager messager, Context context, JCCompilationUnit top) {
-		super(sourceName(top), PackageName.getPackageName(top), new JavacImportList(top));
+		super(sourceName(top), PackageName.getPackageName(top), new JavacImportList(top), statementTypes());
 		setTop(buildCompilationUnit(top));
 		this.context = context;
-		this.messager = messager;
 		this.log = Log.instance(context);
+		this.errorLogger = ErrorLog.create(messager, log);
 		this.elements = JavacElements.instance(context);
 		this.treeMaker = new JavacTreeMaker(TreeMaker.instance(context));
 		this.symtab = Symtab.instance(context);
@@ -207,7 +209,7 @@ public class JavacAST extends AST<JavacAST, JavacNode, JCTree> {
 		List<JavacNode> childNodes = new ArrayList<JavacNode>();
 		for (JCTree s : top.defs) {
 			if (s instanceof JCClassDecl) {
-				addIfNotNull(childNodes, buildType((JCClassDecl)s));
+				addIfNotNull(childNodes, buildType((JCClassDecl) s));
 			} // else they are import statements, which we don't care about. Or Skip objects, whatever those are.
 		}
 		
@@ -226,10 +228,10 @@ public class JavacAST extends AST<JavacAST, JavacNode, JCTree> {
 			 *   JCVariableDecl for fields
 			 *   JCBlock for (static) initializers
 			 */
-			if (def instanceof JCMethodDecl) addIfNotNull(childNodes, buildMethod((JCMethodDecl)def));
-			else if (def instanceof JCClassDecl) addIfNotNull(childNodes, buildType((JCClassDecl)def));
-			else if (def instanceof JCVariableDecl) addIfNotNull(childNodes, buildField((JCVariableDecl)def));
-			else if (def instanceof JCBlock) addIfNotNull(childNodes, buildInitializer((JCBlock)def));
+			if (def instanceof JCMethodDecl) addIfNotNull(childNodes, buildMethod((JCMethodDecl) def));
+			else if (def instanceof JCClassDecl) addIfNotNull(childNodes, buildType((JCClassDecl) def));
+			else if (def instanceof JCVariableDecl) addIfNotNull(childNodes, buildField((JCVariableDecl) def));
+			else if (def instanceof JCBlock) addIfNotNull(childNodes, buildInitializer((JCBlock) def));
 		}
 		
 		return putInMap(new JavacNode(this, type, childNodes, Kind.TYPE));
@@ -315,7 +317,6 @@ public class JavacAST extends AST<JavacAST, JavacNode, JCTree> {
 			// @Foo int x, y; is handled in javac by putting the same annotation node on 2 JCVariableDecls.
 			return null;
 		}
-		
 		return putInMap(new JavacNode(this, annotation, null, Kind.ANNOTATION));
 	}
 	
@@ -333,10 +334,38 @@ public class JavacAST extends AST<JavacAST, JavacNode, JCTree> {
 		if (statement instanceof JCClassDecl) return buildType((JCClassDecl)statement);
 		if (statement instanceof JCVariableDecl) return buildLocalVar((JCVariableDecl)statement, Kind.LOCAL);
 		if (statement instanceof JCTry) return buildTry((JCTry) statement);
-		
+		if (statement.getClass().getSimpleName().equals("JCLambda")) return buildLambda(statement);
 		if (setAndGetAsHandled(statement)) return null;
 		
 		return drill(statement);
+	}
+	
+	private JavacNode buildLambda(JCTree jcTree) {
+		return buildStatementOrExpression(getBody(jcTree));
+	}
+	
+	private JCTree getBody(JCTree jcTree) {
+		try {
+			return (JCTree) getBodyMethod(jcTree.getClass()).invoke(jcTree);
+		} catch (Exception e) {
+			throw Javac.sneakyThrow(e);
+		}
+	}
+	
+	private final static ConcurrentMap<Class<?>, Method> getBodyMethods = new ConcurrentHashMap<Class<?>, Method>();
+	
+	private Method getBodyMethod(Class<?> c) {
+		Method m = getBodyMethods.get(c);
+		if (m != null) {
+			return m;
+		}
+		try {
+			m = c.getMethod("getBody");
+		} catch (NoSuchMethodException e) {
+			throw Javac.sneakyThrow(e);
+		}
+		getBodyMethods.putIfAbsent(c, m);
+		return getBodyMethods.get(c);
 	}
 	
 	private JavacNode drill(JCTree statement) {
@@ -354,9 +383,8 @@ public class JavacAST extends AST<JavacAST, JavacNode, JCTree> {
 		}
 	}
 	
-	/** For javac, both JCExpression and JCStatement are considered as valid children types. */
-	@Override
-	protected Collection<Class<? extends JCTree>> getStatementTypes() {
+	/* For javac, both JCExpression and JCStatement are considered as valid children types. */
+	private static Collection<Class<? extends JCTree>> statementTypes() {
 		Collection<Class<? extends JCTree>> collection = new ArrayList<Class<? extends JCTree>>(3);
 		collection.add(JCStatement.class);
 		collection.add(JCExpression.class);
@@ -394,22 +422,21 @@ public class JavacAST extends AST<JavacAST, JavacNode, JCTree> {
 		try {
 			switch (kind) {
 			case ERROR:
-				increaseErrorCount(messager);
-				boolean prev = log.multipleErrors;
-				log.multipleErrors = true;
-				try {
-					log.error(pos, "proc.messager", message);
-				} finally {
-					log.multipleErrors = prev;
-				}
+				errorLogger.error(pos, message);
+				break;
+			case MANDATORY_WARNING:
+				errorLogger.mandatoryWarning(pos, message);
+				break;
+			case WARNING:
+				errorLogger.warning(pos, message);
 				break;
 			default:
-			case WARNING:
-				log.warning(pos, "proc.messager", message);
+			case NOTE:
+				errorLogger.note(pos, message);
 				break;
 			}
 		} finally {
-			if (oldSource != null) log.useSource(oldSource);
+			if (newSource != null) log.useSource(oldSource);
 		}
 	}
 
@@ -447,16 +474,118 @@ public class JavacAST extends AST<JavacAST, JavacNode, JCTree> {
 		return oldL;
 	}
 	
-	private void increaseErrorCount(Messager m) {
-		try {
-			Field f = m.getClass().getDeclaredField("errorCount");
-			f.setAccessible(true);
-			if (f.getType() == int.class) {
-				int val = ((Number)f.get(m)).intValue();
-				f.set(m, val +1);
+	abstract static class ErrorLog {
+		final Log log;
+		private final Messager messager;
+		private final Field errorCount;
+		private final Field warningCount;
+		
+		private ErrorLog(Log log, Messager messager, Field errorCount, Field warningCount) {
+			this.log = log;
+			this.messager = messager;
+			this.errorCount = errorCount;
+			this.warningCount = warningCount;
+		}
+
+		final void error(DiagnosticPosition pos, String message) {
+			increment(errorCount);
+			error1(pos, message);
+		}
+		
+		final void warning(DiagnosticPosition pos, String message) {
+			increment(warningCount);
+			log.warning(pos, "proc.messager", message);
+		}
+		
+		final void mandatoryWarning(DiagnosticPosition pos, String message) {
+			increment(warningCount);
+			log.mandatoryWarning(pos, "proc.messager", message);
+		}
+		
+		final void note(DiagnosticPosition pos, String message) {
+			log.note(pos, "proc.messager", message);
+		}
+		
+		abstract void error1(DiagnosticPosition pos, String message);
+		
+		private void increment(Field field) {
+			if (field == null) return;
+			try {
+				int val = ((Number)field.get(messager)).intValue();
+				field.set(messager, val +1);
+			} catch (Throwable t) {
+				//Very unfortunate, but in most cases it still works fine, so we'll silently swallow it.
 			}
-		} catch (Throwable t) {
-			//Very unfortunate, but in most cases it still works fine, so we'll silently swallow it.
+		}
+		
+		static ErrorLog create(Messager messager, Log log) {
+			Field errorCount = null;
+			try {
+				Field f = messager.getClass().getDeclaredField("errorCount");
+				f.setAccessible(true);
+				errorCount = f;
+			} catch (Throwable t) {}
+			boolean hasMultipleErrors = false;
+			for (Field field : log.getClass().getFields()) {
+				if (field.getName().equals("multipleErrors")) {
+					hasMultipleErrors = true;
+					break;
+				}
+			}
+			if (hasMultipleErrors) return new JdkBefore9(log, messager, errorCount);
+
+			Field warningCount = null;
+			try {
+				Field f = messager.getClass().getDeclaredField("warningCount");
+				f.setAccessible(true);
+				warningCount = f;
+			} catch (Throwable t) {}
+
+			
+			Method logMethod = null;
+			Object multiple = null;
+			try {
+				Class<?> df = Class.forName("com.sun.tools.javac.util.JCDiagnostic$DiagnosticFlag");
+				for (Object constant : df.getEnumConstants()) {
+					if (constant.toString().equals("MULTIPLE")) multiple = constant;
+				}
+				logMethod = log.getClass().getMethod("error", new Class<?>[] {df, DiagnosticPosition.class, String.class, Object[].class});
+			} catch (Throwable t) {}
+			
+			return new Jdk9Plus(log, messager, errorCount, warningCount, logMethod, multiple);
+		}
+	}
+	
+	static class JdkBefore9 extends ErrorLog {
+		private JdkBefore9(Log log, Messager messager, Field errorCount) {
+			super(log, messager, errorCount, null);
+		}
+
+		@Override void error1(DiagnosticPosition pos, String message) {
+			boolean prev = log.multipleErrors;
+			log.multipleErrors = true;
+			try {
+				log.error(pos, "proc.messager", message);
+			} finally {
+				log.multipleErrors = prev;
+			}
+		}
+	}
+	
+	static class Jdk9Plus extends ErrorLog {
+		private final Object multiple;
+		private final Method logMethod;
+		
+		private Jdk9Plus(Log log, Messager messager, Field errorCount, Field warningCount, Method logMethod, Object multiple) {
+			super(log, messager, errorCount, warningCount);
+			this.logMethod = logMethod;
+			this.multiple = multiple;
+		}
+		
+		@Override void error1(DiagnosticPosition pos, String message) {
+			try {
+				logMethod.invoke(multiple, pos, "proc.messager", message);
+			} catch (Throwable t) {}
 		}
 	}
 }

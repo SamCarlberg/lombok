@@ -6,6 +6,7 @@ enum InjectField1 {
 	@java.lang.SuppressWarnings("all")
 
 	@javax.annotation.Generated("lombok")
+
 	private static final java.util.logging.Logger log = java.util.logging.Logger.getLogger(InjectField1.class.getName());
 	@java.lang.SuppressWarnings("all")
 	@javax.annotation.Generated("lombok")

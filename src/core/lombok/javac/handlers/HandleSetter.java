@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2014 The Project Lombok Authors.
+ * Copyright (C) 2009-2017 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +22,8 @@
 package lombok.javac.handlers;
 
 import com.sun.tools.javac.code.Flags;
+import com.sun.tools.javac.code.Symbol.ClassSymbol;
+import com.sun.tools.javac.code.Type;
 import com.sun.tools.javac.tree.JCTree.JCAnnotation;
 import com.sun.tools.javac.tree.JCTree.JCAssign;
 import com.sun.tools.javac.tree.JCTree.JCBlock;
@@ -129,8 +131,8 @@ public class HandleSetter extends JavacAnnotationHandler<Setter> {
 		
 		if (level == AccessLevel.NONE || node == null) return;
 		
-		List<JCAnnotation> onMethod = unboxAndRemoveAnnotationParameter(ast, "onMethod", "@Setter(onMethod=", annotationNode);
-		List<JCAnnotation> onParam = unboxAndRemoveAnnotationParameter(ast, "onParam", "@Setter(onParam=", annotationNode);
+		List<JCAnnotation> onMethod = unboxAndRemoveAnnotationParameter(ast, "onMethod", "@Setter(onMethod", annotationNode);
+		List<JCAnnotation> onParam = unboxAndRemoveAnnotationParameter(ast, "onParam", "@Setter(onParam", annotationNode);
 		
 		switch (node.getKind()) {
 		case FIELD:
@@ -156,7 +158,7 @@ public class HandleSetter extends JavacAnnotationHandler<Setter> {
 			return;
 		}
 		
-		JCVariableDecl fieldDecl = (JCVariableDecl)fieldNode.get();
+		JCVariableDecl fieldDecl = (JCVariableDecl) fieldNode.get();
 		String methodName = toSetterName(fieldNode);
 		
 		if (methodName == null) {
@@ -190,16 +192,26 @@ public class HandleSetter extends JavacAnnotationHandler<Setter> {
 		long access = toJavacModifier(level) | (fieldDecl.mods.flags & Flags.STATIC);
 		
 		JCMethodDecl createdSetter = createSetter(access, fieldNode, fieldNode.getTreeMaker(), sourceNode, onMethod, onParam);
-		injectMethod(fieldNode.up(), createdSetter);
+		Type fieldType = getMirrorForFieldType(fieldNode);
+		Type returnType;
+		
+		if (shouldReturnThis(fieldNode)) {
+			ClassSymbol sym = ((JCClassDecl) fieldNode.up().get()).sym;
+			returnType = sym == null ? null : sym.type;
+		} else {
+			returnType = Javac.createVoidType(fieldNode.getSymbolTable(), CTC_VOID);
+		}
+		
+		injectMethod(fieldNode.up(), createdSetter, fieldType == null ? null : List.of(fieldType), returnType);
 	}
 	
 	public static JCMethodDecl createSetter(long access, JavacNode field, JavacTreeMaker treeMaker, JavacNode source, List<JCAnnotation> onMethod, List<JCAnnotation> onParam) {
 		String setterName = toSetterName(field);
 		boolean returnThis = shouldReturnThis(field);
-		return createSetter(access, field, treeMaker, setterName, returnThis, source, onMethod, onParam);
+		return createSetter(access, false, field, treeMaker, setterName, null, returnThis, source, onMethod, onParam);
 	}
 	
-	public static JCMethodDecl createSetter(long access, JavacNode field, JavacTreeMaker treeMaker, String setterName, boolean shouldReturnThis, JavacNode source, List<JCAnnotation> onMethod, List<JCAnnotation> onParam) {
+	public static JCMethodDecl createSetter(long access, boolean deprecate, JavacNode field, JavacTreeMaker treeMaker, String setterName, Name booleanFieldToSet, boolean shouldReturnThis, JavacNode source, List<JCAnnotation> onMethod, List<JCAnnotation> onParam) {
 		if (setterName == null) return null;
 		
 		JCVariableDecl fieldDecl = (JCVariableDecl) field.get();
@@ -273,6 +285,11 @@ public class HandleSetter extends JavacAnnotationHandler<Setter> {
 			statements.append(treeMaker.Exec(assign));
 		}
 		
+		if (booleanFieldToSet != null) {
+			JCAssign setBool = treeMaker.Assign(treeMaker.Ident(booleanFieldToSet), treeMaker.Literal(CTC_BOOLEAN, 1));
+			statements.append(treeMaker.Exec(setBool));
+		}
+		
 		JCExpression methodType = null;
 		if (shouldReturnThis) {
 			methodType = cloneSelfType(field);
@@ -280,7 +297,7 @@ public class HandleSetter extends JavacAnnotationHandler<Setter> {
 		
 		if (methodType == null) {
 			//WARNING: Do not use field.getSymbolTable().voidType - that field has gone through non-backwards compatible API changes within javac1.6.
-			methodType = treeMaker.Type(Javac.createVoidType(treeMaker, CTC_VOID));
+			methodType = treeMaker.Type(Javac.createVoidType(field.getSymbolTable(), CTC_VOID));
 			shouldReturnThis = false;
 		}
 		
@@ -296,7 +313,7 @@ public class HandleSetter extends JavacAnnotationHandler<Setter> {
 		JCExpression annotationMethodDefaultValue = null;
 		
 		List<JCAnnotation> annsOnMethod = copyAnnotations(onMethod);
-		if (isFieldDeprecated(field)) {
+		if (isFieldDeprecated(field) || deprecate) {
 			annsOnMethod = annsOnMethod.prepend(treeMaker.Annotation(genJavaLangTypeRef(field, "Deprecated"), List.<JCExpression>nil()));
 		}
 		

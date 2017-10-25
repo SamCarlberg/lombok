@@ -1,11 +1,44 @@
 Lombok Changelog
 ----------------
 
-### v1.16.9 "Edgy Guinea Pig"
+### v1.16.19 "Edgy Guinea Pig"
+* v1.16.18 is the latest stable release of Project Lombok.
+
+### v1.16.18 (July 3rd, 2017)
+* PLATFORM: JDK9 support much improved since v1.16.6; [Issue #985](https://github.com/rzwitserloot/lombok/issues/985)
+* BUGFIX: Lombok now works with [Bazel](https://bazel.build/) and [Error Prone](https://error-prone.info/). [Issue #1290](https://github.com/rzwitserloot/lombok/issues/1290)
+* FEATURE: Lombok has a new [website](https://projectlombok.org/)! A few very minor changes to the code to be more consistent with it have been added, mostly to the javadoc.
+
+### v1.16.16 "Dancing Elephant" (March 23rd, 2017)
+* FEATURE: `@Builder.Default` lets you configure default values for your fields when using `@Builder`. See the [Builder feature page](https://projectlombok.org/features/Builder.html) for more information. [Issue #1201](https://github.com/rzwitserloot/lombok/issues/1201)
+* PLATFORM: JDK9 now supported for compilation (delomboking with java9 not yet possible). Note, you'll have to do some command line wrangling. See [Issue #985](https://github.com/rzwitserloot/lombok/issues/985)
+* BUGFIX: The `onX` feature (which lets you add annotations to generated methods) did not work if the annotation you added contained named parameters, and you are compiling with JDK8's javac. We can't fix this (it's a bug in javac), but we have provided an alternate, prettier way to do `onX` on javac8+. [Issue #778](https://github.com/rzwitserloot/lombok/issues/778) [onX documentation](https://projectlombok.org/features/experimental/onX.html)
+* BUGFIX: `@Data` and `@Value` now respect the configuration for field access when generating equals, hashCode and toString [Issue #1329](https://github.com/rzwitserloot/lombok/issues/1329)
+* BUGFIX: `@Builder` now marks generated builder 'setters' as `@Deprecated` if the source field is deprecated. [Issue #1342](https://github.com/rzwitserloot/lombok/issues/1342)
+* CHANGE: `@ConstructorProperties` will now also be generated for private and package private constructors. This is useful for Jackson [Issue #1180](https://github.com/rzwitserloot/lombok/issues/1180)
+
+### v1.16.14 (February 10th, 2017)
+* FEATURE: Generated classes, methods and fields can now also annotated with `@lombok.Generated` [Issue #1014](https://github.com/rzwitserloot/lombok/issues/1014)
+* PLATFORM: Lombok can now be used together with other annotation processors that are looking for lombok-generated methods, but only if lombok is the first annotation processor executed. The most commonly used annotation processor affected by this change is [MapStruct](http://mapstruct.org/); we've worked with the mapstruct team specifically to allow any order. Other annotation processors might follow the framework we've built to make this possible; point the authors of any such processor to us and we'll get it sorted [MapStruct issue #510](https://github.com/mapstruct/mapstruct/issues/510) [Lombok issue #973](https://github.com/rzwitserloot/lombok/issues/973)
+* PLATFORM: Eclipse: Refactor script 'rename field' when lombok has also generated getters and/or setters for this field is nicer now [Issue #210](https://github.com/rzwitserloot/lombok/issues/210)
+* BUGFIX: Something you never encountered. [Issue #1274](https://github.com/rzwitserloot/lombok/issues/1274)
+
+### v1.16.12 (December 5th, 2016)
+* FEATURE: `var` is the mutable sister of `val`. For now experimental, and opt-in using `ALLOW` in the flagUsage configuration key. Thanks for the contribution, Bulgakov Alexander. 
+* CHANGE: `@Value` and `@FieldDefaults` no longer touch static fields [Issue #1254](https://github.com/rzwitserloot/lombok/issues/1254)
+* BUGFIX: `val` in lambda expressions now work as expected [Issue #911](https://github.com/rzwitserloot/lombok/issues/911)
+* BUGFIX: `Getter(lazy=true)` now emits an error message when used on a transient field [Issue #1236](https://github.com/rzwitserloot/lombok/issues/1236)
+* BUGFIX: Annotation Processors that use ecj internally (dagger) no longer give linkage errors [Issue #1218](https://github.com/rzwitserloot/lombok/issues/1218)
+* PLATFORM: Red Hat JBoss Developer Studio is now correctly identified by the installer [Issue #1164](https://github.com/rzwitserloot/lombok/issues/1164)
+* BUGFIX: delombok: for-loops with initializers that are not local variables would be generated incorrectly [Issue #1076](https://github.com/rzwitserloot/lombok/issues/1076)
+
+### v1.16.10 (July 15th, 2016)
 * FEATURE: Added support for JBoss logger [Issue #1103](https://github.com/rzwitserloot/lombok/issues/1103)
+* ENHANCEMENT: Running `javac -Xlint:all` would generate a warning about unclaimed annotations [Issue #1117](https://github.com/rzwitserloot/lombok/issues/1117)
+* BUGFIX: Eclipse Mars would sometimes throw a NullPointerException when using `@Delegate` [Issue #913](https://github.com/rzwitserloot/lombok/issues/913)
+* ENHANCEMENT: Add support for older maven-compiler-plugin [Issue #1138](https://github.com/rzwitserloot/lombok/issues/1138)
 
 ### v1.16.8 (March 7th, 2016)
-
 * PLATFORM: Starting jdk9 support: No more error message regarding `pid`
 * FEATURE: `@Builder` updates: It now generates `clearFieldName()` methods if `@Singular` is used. [Issue #967](https://github.com/rzwitserloot/lombok/issues/967).
 * FEATURE: `@Builder` updates: The annotation can now be put on instance methods. [Issue #63](https://github.com/rzwitserloot/lombok/issues/63).
@@ -136,7 +169,7 @@ Lombok Changelog
 * FEATURE: Added support for Slf4j extended logger [Issue #494](https://github.com/rzwitserloot/lombok/issues/494)
 * BUGFIX: {Delombok} Running delombok has been causing VerifyError errors when used with javac 1.7 since 0.11.0. [Issue #495](https://github.com/rzwitserloot/lombok/issues/495)
 * BUGFIX: A conflict between lombok and certain eclipse plugins would result in NullPointerExceptions in the log when using `@Delegate`.
-* BUGFIX: `NullPointerException in lombok.javac.handlers.JavacHandlerUtil.upToTypeNode(JavacHandlerUtil.java:978)` when compiling with `@ExtensionMethod` in javac and generated constructors are involved. [Issue #496](https://github.com/rzwitserloot/lombok/issues/496)
+* BUGFIX: `NullPointerException in lombok.&#8203;javac.&#8203;handlers.&#8203;JavacHandlerUtil.&#8203;upToTypeNode&#8203;(JavacHandlerUtil.java:978)` when compiling with `@ExtensionMethod` in javac and generated constructors are involved. [Issue #496](https://github.com/rzwitserloot/lombok/issues/496)
 * BUGFIX: `@Deprecated` on a field that gets a generated setter in eclipse would result in `IllegalArgumentException`, which you wouldn't see unless you have the error log open. If you have save actions defined, you'd get a popup box with the exception. Now fixed. [Issue #481](https://github.com/rzwitserloot/lombok/issues/481)
 
 ### v0.11.4 (August 13th, 2012)

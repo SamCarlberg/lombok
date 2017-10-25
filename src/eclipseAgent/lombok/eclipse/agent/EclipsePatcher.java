@@ -24,11 +24,14 @@ package lombok.eclipse.agent;
 import static lombok.patcher.scripts.ScriptBuilder.*;
 
 import java.lang.instrument.Instrumentation;
+import java.net.URLClassLoader;
+import java.security.ProtectionDomain;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
 import lombok.core.AgentLauncher;
+import lombok.patcher.Filter;
 import lombok.patcher.Hook;
 import lombok.patcher.MethodTarget;
 import lombok.patcher.ScriptManager;
@@ -74,6 +77,15 @@ public class EclipsePatcher implements AgentLauncher.AgentLaunchable {
 	private static void registerPatchScripts(Instrumentation instrumentation, boolean reloadExistingClasses, boolean ecjOnly, Class<?> launchingContext) {
 		ScriptManager sm = new ScriptManager();
 		sm.registerTransformer(instrumentation);
+		sm.setFilter(new Filter() {
+			@Override public boolean shouldTransform(ClassLoader loader, String className, Class<?> classBeingDefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
+				if (!(loader instanceof URLClassLoader)) return true;
+				ClassLoader parent = loader.getParent();
+				if (parent == null) return true;
+				return !parent.getClass().getName().startsWith("org.eclipse.jdt.apt.core.internal.AnnotationProcessorFactoryLoader");
+			}
+		});
+		
 		final boolean forceBaseResourceNames = !"".equals(System.getProperty("shadow.override.lombok", ""));
 		sm.setTransplantMapper(new TransplantMapper() {
 			public String mapResourceName(int classFileFormatVersion, String resourceName) {
@@ -108,8 +120,26 @@ public class EclipsePatcher implements AgentLauncher.AgentLaunchable {
 		patchLombokizeAST(sm);
 		patchEcjTransformers(sm, ecjOnly);
 		patchExtensionMethod(sm, ecjOnly);
+		patchRenameField(sm);
 		
 		if (reloadExistingClasses) sm.reloadClasses(instrumentation);
+	}
+	
+	private static void patchRenameField(ScriptManager sm) {
+		/* RefactoringSearchEngine.search will not return results when renaming field and Data Annotation is present. Return a fake Element to make checks pass */
+		sm.addScript(ScriptBuilder.wrapMethodCall()
+				.target(new MethodTarget("org.eclipse.jdt.internal.corext.refactoring.rename.RenameFieldProcessor", "checkAccessorDeclarations", "org.eclipse.ltk.core.refactoring.RefactoringStatus", "org.eclipse.core.runtime.IProgressMonitor", "org.eclipse.jdt.core.IMethod"))
+				.methodToWrap(new Hook("org.eclipse.jdt.internal.corext.refactoring.RefactoringSearchEngine", "search", "org.eclipse.jdt.internal.corext.refactoring.SearchResultGroup[]", "org.eclipse.jdt.core.search.SearchPattern","org.eclipse.jdt.core.search.IJavaSearchScope","org.eclipse.core.runtime.IProgressMonitor","org.eclipse.ltk.core.refactoring.RefactoringStatus"))
+				.wrapMethod(new Hook("lombok.launch.PatchFixesHider$PatchFixes", "createFakeSearchResult", "org.eclipse.jdt.internal.corext.refactoring.SearchResultGroup[]", "org.eclipse.jdt.internal.corext.refactoring.SearchResultGroup[]", "java.lang.Object"))
+				.requestExtra(StackRequest.THIS)
+				.transplant().build());
+		
+		/* Filter search results which are Generated and based on Fields, e.g. Generated getters/setters */
+		sm.addScript(ScriptBuilder.wrapMethodCall()
+				.target(new MethodTarget("org.eclipse.jdt.internal.corext.refactoring.rename.RenameFieldProcessor", "addAccessorOccurrences", "void", "org.eclipse.core.runtime.IProgressMonitor", "org.eclipse.jdt.core.IMethod", "java.lang.String","java.lang.String","org.eclipse.ltk.core.refactoring.RefactoringStatus"))
+				.methodToWrap(new Hook("org.eclipse.jdt.internal.corext.refactoring.SearchResultGroup", "getSearchResults", "org.eclipse.jdt.core.search.SearchMatch[]"))
+				.wrapMethod(new Hook("lombok.launch.PatchFixesHider$PatchFixes", "removeGenerated", "org.eclipse.jdt.core.search.SearchMatch[]", "org.eclipse.jdt.core.search.SearchMatch[]"))
+				.transplant().build());
 	}
 	
 	private static void patchExtractInterface(ScriptManager sm) {

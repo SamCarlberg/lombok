@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2015 The Project Lombok Authors.
+ * Copyright (C) 2013-2017 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,6 +35,7 @@ import lombok.core.AST;
 import lombok.core.AnnotationValues;
 import lombok.core.JavaIdentifiers;
 import lombok.core.LombokNode;
+import lombok.core.configuration.AllowHelper;
 import lombok.core.configuration.ConfigurationKey;
 import lombok.core.configuration.FlagUsageType;
 import lombok.experimental.Accessors;
@@ -97,11 +98,22 @@ public class HandlerUtil {
 	public static void handleFlagUsage(LombokNode<?, ?, ?> node, ConfigurationKey<FlagUsageType> key, String featureName) {
 		FlagUsageType fut = node.getAst().readConfiguration(key);
 		
+		if (fut == null && AllowHelper.isAllowable(key)) {
+			node.addError("Use of " + featureName + " is disabled by default. Please add '" + key.getKeyName() + " = " + FlagUsageType.ALLOW + "' to 'lombok.config' if you want to enable is.");
+		}
+		
 		if (fut != null) {
 			String msg = "Use of " + featureName + " is flagged according to lombok configuration.";
 			if (fut == FlagUsageType.WARNING) node.addWarning(msg);
-			else node.addError(msg);
+			else if (fut == FlagUsageType.ERROR) node.addError(msg);
 		}
+	}
+	
+	@SuppressWarnings("deprecation")
+	public static boolean shouldAddGenerated(LombokNode<?, ?, ?> node) {
+		Boolean add = node.getAst().readConfiguration(ConfigurationKeys.ADD_JAVAX_GENERATED_ANNOTATIONS);
+		if (add != null) return add;
+		return !Boolean.FALSE.equals(node.getAst().readConfiguration(ConfigurationKeys.ADD_GENERATED_ANNOTATIONS));
 	}
 	
 	public static void handleExperimentalFlagUsage(LombokNode<?, ?, ?> node, ConfigurationKey<FlagUsageType> key, String featureName) {

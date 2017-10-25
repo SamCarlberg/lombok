@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2014 The Project Lombok Authors.
+ * Copyright (C) 2013-2017 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -48,8 +48,8 @@ import java.lang.annotation.Target;
  * as the relevant class, unless a method has been annotated, in which case it'll be equal to the
  * return type of that method.
  * <p>
- * Complete documentation is found at <a href="https://projectlombok.org/features/experimental/Builder.html">the project lombok features page for &#64;Builder</a>.
- * <p>
+ * Complete documentation is found at <a href="https://projectlombok.org/features/Builder">the project lombok features page for &#64;Builder</a>.
+ * <br>
  * <p>
  * Before:
  * 
@@ -110,15 +110,20 @@ import java.lang.annotation.Target;
 @Retention(SOURCE)
 @Deprecated
 public @interface Builder {
-	/** Name of the method that creates a new builder instance. Default: {@code builder}. */
+	/** @return Name of the method that creates a new builder instance. Default: {@code builder}. */
 	String builderMethodName() default "builder";
 	
-	/** Name of the method in the builder class that creates an instance of your {@code @Builder}-annotated class. */
+	/** @return Name of the method in the builder class that creates an instance of your {@code @Builder}-annotated class. */
 	String buildMethodName() default "build";
 	
-	/** Name of the builder class.
+	/**
+	 * Name of the builder class.
+	 * 
 	 * Default for {@code @Builder} on types and constructors: {@code (TypeName)Builder}.
+	 * <p>
 	 * Default for {@code @Builder} on methods: {@code (ReturnTypeName)Builder}.
+	 * 
+	 * @return Name of the builder class that will be generated (or if it already exists, will be filled with builder elements).
 	 */
 	String builderClassName() default "";
 	
@@ -127,6 +132,8 @@ public @interface Builder {
 	 * to {@code false} to name the setter method for field {@code someField}: {@code setSomeField}.
 	 * <p>
 	 * <strong>Default: true</strong>
+	 * 
+	 * @return Whether to generate fluent methods (just {@code fieldName()} instead of {@code setFieldName()}).
 	 */
 	boolean fluent() default true;
 	
@@ -135,6 +142,8 @@ public @interface Builder {
 	 * calls to set methods. Set this to {@code false} to have these 'set' methods return {@code void} instead.
 	 * <p>
 	 * <strong>Default: true</strong>
+	 * 
+	 * @return Whether to generate chaining methods (each build call returns itself instead of returning {@code void}).
 	 */
 	boolean chain() default true;
 }

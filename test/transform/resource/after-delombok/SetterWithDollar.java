@@ -4,6 +4,7 @@ class SetterWithDollar1 {
 	@java.lang.SuppressWarnings("all")
 	
 	@javax.annotation.Generated("lombok")
+	
 	public void set$i(final int $i) {
 		this.$i = $i;
 	}
@@ -15,6 +16,7 @@ class SetterWithDollar2 {
 	@java.lang.SuppressWarnings("all")
 	
 	@javax.annotation.Generated("lombok")
+	
 	public void set$i(final int $i) {
 		this.$i = $i;
 	}

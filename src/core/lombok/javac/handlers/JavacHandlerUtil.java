@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 The Project Lombok Authors.
+ * Copyright (C) 2009-2017 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -37,6 +37,8 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.lang.model.element.Element;
+
 import lombok.AccessLevel;
 import lombok.ConfigurationKeys;
 import lombok.Data;
@@ -59,7 +61,12 @@ import com.sun.tools.javac.code.BoundKind;
 import com.sun.tools.javac.code.Flags;
 import com.sun.tools.javac.code.Scope;
 import com.sun.tools.javac.code.Symbol;
+import com.sun.tools.javac.code.Symtab;
+import com.sun.tools.javac.code.Type;
 import com.sun.tools.javac.code.Symbol.ClassSymbol;
+import com.sun.tools.javac.code.Symbol.MethodSymbol;
+import com.sun.tools.javac.code.Symbol.VarSymbol;
+import com.sun.tools.javac.code.Type.MethodType;
 import com.sun.tools.javac.parser.Tokens.Comment;
 import com.sun.tools.javac.tree.DocCommentTable;
 import com.sun.tools.javac.tree.JCTree;
@@ -85,6 +92,7 @@ import com.sun.tools.javac.tree.JCTree.JCTypeParameter;
 import com.sun.tools.javac.tree.JCTree.JCVariableDecl;
 import com.sun.tools.javac.tree.JCTree.JCWildcard;
 import com.sun.tools.javac.tree.JCTree.TypeBoundKind;
+import com.sun.tools.javac.tree.TreeMaker;
 import com.sun.tools.javac.tree.TreeScanner;
 import com.sun.tools.javac.util.Context;
 import com.sun.tools.javac.util.JCDiagnostic.DiagnosticPosition;
@@ -183,6 +191,27 @@ public class JavacHandlerUtil {
 		}
 	}
 	
+	static JavacNode findAnnotation(Class<? extends Annotation> type, JavacNode node, boolean delete) {
+		if (node == null) return null;
+		if (type == null) return null;
+		switch (node.getKind()) {
+		case ARGUMENT:
+		case FIELD:
+		case LOCAL:
+		case TYPE:
+		case METHOD:
+			for (JavacNode child : node.down()) {
+				if (annotationTypeMatches(type, child)) {
+					if (delete) deleteAnnotationIfNeccessary(child, type);
+					return child;
+				}
+			}
+			// intentional fallthrough
+		default:
+			return null;
+		}
+	}
+	
 	/**
 	 * Checks if the Annotation AST Node provided is likely to be an instance of the provided annotation type.
 	 * 
@@ -214,6 +243,7 @@ public class JavacHandlerUtil {
 	 * @return {@code true} if a field is marked deprecated, either by {@code @Deprecated} or in javadoc, otherwise {@code false}
 	 */
 	public static boolean isFieldDeprecated(JavacNode field) {
+		if (!(field.get() instanceof JCVariableDecl)) return false;
 		JCVariableDecl fieldNode = (JCVariableDecl) field.get();
 		if ((fieldNode.mods.flags & Flags.DEPRECATED) != 0) {
 			return true;
@@ -605,10 +635,7 @@ public class JavacHandlerUtil {
 							if (params < minArgs || params > maxArgs) continue;
 						}
 						
-						List<JCAnnotation> annotations = md.getModifiers().getAnnotations();
-						if (annotations != null) for (JCAnnotation anno : annotations) {
-							if (typeMatches(Tolerate.class, node, anno.getAnnotationType())) continue top;
-						}
+						if (isTolerate(node, md)) continue top;
 						
 						return getGeneratedBy(def) == null ? MemberExistsResult.EXISTS_BY_USER : MemberExistsResult.EXISTS_BY_LOMBOK;
 					}
@@ -617,6 +644,14 @@ public class JavacHandlerUtil {
 		}
 		
 		return MemberExistsResult.NOT_EXISTS;
+	}
+	
+	public static boolean isTolerate(JavacNode node, JCTree.JCMethodDecl md) {
+		List<JCAnnotation> annotations = md.getModifiers().getAnnotations();
+		if (annotations != null) for (JCTree.JCAnnotation anno : annotations) {
+			if (typeMatches(Tolerate.class, node, anno.getAnnotationType())) return true;
+		}
+		return false;
 	}
 	
 	/**
@@ -629,15 +664,12 @@ public class JavacHandlerUtil {
 		node = upToTypeNode(node);
 		
 		if (node != null && node.get() instanceof JCClassDecl) {
-			top: for (JCTree def : ((JCClassDecl)node.get()).defs) {
+			for (JCTree def : ((JCClassDecl)node.get()).defs) {
 				if (def instanceof JCMethodDecl) {
 					JCMethodDecl md = (JCMethodDecl) def;
 					if (md.name.contentEquals("<init>")) {
 						if ((md.mods.flags & Flags.GENERATEDCONSTR) != 0) continue;
-						List<JCAnnotation> annotations = md.getModifiers().getAnnotations();
-						if (annotations != null) for (JCAnnotation anno : annotations) {
-							if (typeMatches(Tolerate.class, node, anno.getAnnotationType())) continue top;
-						}
+						if (isTolerate(node, md)) continue;
 						return getGeneratedBy(def) == null ? MemberExistsResult.EXISTS_BY_USER : MemberExistsResult.EXISTS_BY_LOMBOK;
 					}
 				}
@@ -817,6 +849,12 @@ public class JavacHandlerUtil {
 		return call;
 	}
 	
+	public static Type getMirrorForFieldType(JavacNode fieldNode) {
+		Element fieldElement = fieldNode.getElement();
+		if (fieldElement instanceof VarSymbol) return ((VarSymbol) fieldElement).type;
+		return null;
+	}
+	
 	/**
 	 * Adds the given new field declaration to the provided type AST Node.
 	 * The field carries the &#64;{@link SuppressWarnings}("all") annotation.
@@ -879,16 +917,20 @@ public class JavacHandlerUtil {
 	static class ClassSymbolMembersField {
 		private static final Field membersField;
 		private static final Method removeMethod;
+		private static final Method enterMethod;
 		
 		static {
 			Field f = null;
-			Method m = null;
+			Method r = null;
+			Method e = null;
 			try {
 				f = ClassSymbol.class.getField("members_field");
-				m = f.getType().getMethod("remove", Symbol.class);
-			} catch (Exception e) {}
+				r = f.getType().getMethod("remove", Symbol.class);
+				e = f.getType().getMethod("enter", Symbol.class);
+			} catch (Exception ex) {}
 			membersField = f;
-			removeMethod = m;
+			removeMethod = r;
+			enterMethod = e;
 		}
 		
 		static void remove(ClassSymbol from, Symbol toRemove) {
@@ -899,6 +941,19 @@ public class JavacHandlerUtil {
 				removeMethod.invoke(scope, toRemove);
 			} catch (Exception e) {}
 		}
+		
+		static void enter(ClassSymbol from, Symbol toEnter) {
+			if (from == null) return;
+			try {
+				Scope scope = (Scope) membersField.get(from);
+				if (scope == null) return;
+				enterMethod.invoke(scope, toEnter);
+			} catch (Exception e) {}
+		}
+	}
+	
+	public static void injectMethod(JavacNode typeNode, JCMethodDecl method) {
+		injectMethod(typeNode, method, null, null);
 	}
 	
 	/**
@@ -907,7 +962,7 @@ public class JavacHandlerUtil {
 	 * 
 	 * Also takes care of updating the JavacAST.
 	 */
-	public static void injectMethod(JavacNode typeNode, JCMethodDecl method) {
+	public static void injectMethod(JavacNode typeNode, JCMethodDecl method, List<Type> paramTypes, Type returnType) {
 		JCClassDecl type = (JCClassDecl) typeNode.get();
 		
 		if (method.getName().contentEquals("<init>")) {
@@ -915,7 +970,7 @@ public class JavacHandlerUtil {
 			int idx = 0;
 			for (JCTree def : type.defs) {
 				if (def instanceof JCMethodDecl) {
-					if ((((JCMethodDecl)def).mods.flags & Flags.GENERATEDCONSTR) != 0) {
+					if ((((JCMethodDecl) def).mods.flags & Flags.GENERATEDCONSTR) != 0) {
 						JavacNode tossMe = typeNode.getNodeFor(def);
 						if (tossMe != null) tossMe.up().removeChild(tossMe);
 						type.defs = addAllButOne(type.defs, idx);
@@ -931,7 +986,16 @@ public class JavacHandlerUtil {
 		addGenerated(method.mods, typeNode, method.pos, getGeneratedBy(method), typeNode.getContext());
 		type.defs = type.defs.append(method);
 		
+		fixMethodMirror(typeNode.getContext(), typeNode.getElement(), method.getModifiers().flags, method.getName(), paramTypes, returnType);
+		
 		typeNode.add(method, Kind.METHOD);
+	}
+	
+	private static void fixMethodMirror(Context context, Element typeMirror, long access, Name methodName, List<Type> paramTypes, Type returnType) {
+		if (typeMirror == null || paramTypes == null || returnType == null) return;
+		ClassSymbol cs = (ClassSymbol) typeMirror;
+		MethodSymbol methodSymbol = new MethodSymbol(access, methodName, new MethodType(paramTypes, returnType, List.<Type>nil(), Symtab.instance(context).methodClass), cs);
+		ClassSymbolMembersField.enter(cs, methodSymbol);
 	}
 	
 	/**
@@ -997,8 +1061,11 @@ public class JavacHandlerUtil {
 	public static void addGenerated(JCModifiers mods, JavacNode node, int pos, JCTree source, Context context) {
 		if (!LombokOptionsFactory.getDelombokOptions(context).getFormatPreferences().generateGenerated()) return;
 		
-		if (!Boolean.FALSE.equals(node.getAst().readConfiguration(ConfigurationKeys.ADD_GENERATED_ANNOTATIONS))) {
+		if (HandlerUtil.shouldAddGenerated(node)) {
 			addAnnotation(mods, node, pos, source, context, "javax.annotation.Generated", node.getTreeMaker().Literal("lombok"));
+		}
+		if (Boolean.TRUE.equals(node.getAst().readConfiguration(ConfigurationKeys.ADD_LOMBOK_GENERATED_ANNOTATIONS))) {
+			addAnnotation(mods, node, pos, source, context, "lombok.Generated", null);
 		}
 	}
 	
@@ -1013,12 +1080,16 @@ public class JavacHandlerUtil {
 		
 		for (JCAnnotation ann : mods.annotations) {
 			JCTree annType = ann.getAnnotationType();
-			Name lastPart = null;
-			if (annType instanceof JCIdent) lastPart = ((JCIdent) annType).name;
-			else if (annType instanceof JCFieldAccess) lastPart = ((JCFieldAccess) annType).name;
+			if (annType instanceof JCIdent) {
+				Name lastPart = ((JCIdent) annType).name;
+				if (lastPart.contentEquals(simpleName)) return;
+			}
 			
-			if (lastPart != null && lastPart.contentEquals(simpleName)) return;
+			if (annType instanceof JCFieldAccess) {
+				if (annType.toString().equals(annotationTypeFqn)) return;
+			}
 		}
+		
 		JavacTreeMaker maker = node.getTreeMaker();
 		JCExpression annType = isJavaLangBased ? genJavaLangTypeRef(node, simpleName) : chainDotsString(node, annotationTypeFqn);
 		annType.pos = pos;
@@ -1140,16 +1211,25 @@ public class JavacHandlerUtil {
 	}
 	
 	/**
-	 * Generates a new statement that checks if the given variable is null, and if so, throws a specified exception with the
+	 * Generates a new statement that checks if the given variable is null, and if so, throws a configured exception with the
 	 * variable name as message.
-	 * 
-	 * @param exName The name of the exception to throw; normally {@code java.lang.NullPointerException}.
 	 */
 	public static JCStatement generateNullCheck(JavacTreeMaker maker, JavacNode variable, JavacNode source) {
+		return generateNullCheck(maker, variable, (JCVariableDecl)variable.get(), source);
+	}
+
+	/**
+	 * Generates a new statement that checks if the given variable is null, and if so, throws a configured exception with the
+	 * variable name as message. 
+	 * 
+	 * This is a special case method reserved for use when the provided declaration differs from the
+	 * variable's declaration, i.e. in a constructor or setter where the local parameter is named the same but with the prefix
+	 * stripped as a result of @Accessors.prefix.
+	 */
+	public static JCStatement generateNullCheck(JavacTreeMaker maker, JavacNode variable, JCVariableDecl varDecl, JavacNode source) {
 		NullCheckExceptionType exceptionType = source.getAst().readConfiguration(ConfigurationKeys.NON_NULL_EXCEPTION_TYPE);
 		if (exceptionType == null) exceptionType = NullCheckExceptionType.NULL_POINTER_EXCEPTION;
 		
-		JCVariableDecl varDecl = (JCVariableDecl) variable.get();
 		if (isPrimitive(varDecl.vartype)) return null;
 		Name fieldName = varDecl.name;
 		JCExpression exType = genTypeRef(variable, exceptionType.getExceptionType());
@@ -1247,19 +1327,9 @@ public class JavacHandlerUtil {
 		ListBuffer<JCExpression> params = new ListBuffer<JCExpression>();
 		ListBuffer<JCAnnotation> result = new ListBuffer<JCAnnotation>();
 		
-		try {
-			for (JCExpression arg : ast.args) {
-				String argName = "value";
-				if (arg instanceof JCAssign) {
-					JCAssign as = (JCAssign) arg;
-					argName = as.lhs.toString();
-				}
-				if (!argName.equals(parameterName)) continue;
-			}
-		} catch (Exception ignore) {}
-		
 		outer:
 		for (JCExpression param : ast.args) {
+			boolean allowRaw;
 			String nameOfParam = "value";
 			JCExpression valueOfParam = null;
 			if (param instanceof JCAssign) {
@@ -1269,6 +1339,15 @@ public class JavacHandlerUtil {
 					nameOfParam = ident.name.toString();
 				}
 				valueOfParam = assign.rhs;
+			}
+			
+			/* strip trailing underscores */ {
+				int lastIdx;
+				for (lastIdx = nameOfParam.length() ; lastIdx > 0; lastIdx--) {
+					if (nameOfParam.charAt(lastIdx - 1) != '_') break;
+				}
+				allowRaw = lastIdx < nameOfParam.length();
+				nameOfParam = nameOfParam.substring(0, lastIdx);
 			}
 			
 			if (!parameterName.equals(nameOfParam)) {
@@ -1283,52 +1362,84 @@ public class JavacHandlerUtil {
 				String dummyAnnotationName = ((JCAnnotation) valueOfParam).annotationType.toString();
 				dummyAnnotationName = dummyAnnotationName.replace("_", "").replace("$", "").replace("x", "").replace("X", "");
 				if (dummyAnnotationName.length() > 0) {
-					annotationNode.addError("The correct format is " + errorName + "@__({@SomeAnnotation, @SomeOtherAnnotation}))");
-					continue outer;
-				}
-				for (JCExpression expr : ((JCAnnotation) valueOfParam).args) {
-					if (expr instanceof JCAssign && ((JCAssign) expr).lhs instanceof JCIdent) {
-						JCIdent id = (JCIdent) ((JCAssign) expr).lhs;
-						if ("value".equals(id.name.toString())) {
-							expr = ((JCAssign) expr).rhs;
+					if (allowRaw) {
+						result.append((JCAnnotation) valueOfParam);
+					} else {
+						addError(errorName, annotationNode);
+						continue outer;
+					}
+				} else {
+					for (JCExpression expr : ((JCAnnotation) valueOfParam).args) {
+						if (expr instanceof JCAssign && ((JCAssign) expr).lhs instanceof JCIdent) {
+							JCIdent id = (JCIdent) ((JCAssign) expr).lhs;
+							if ("value".equals(id.name.toString())) {
+								expr = ((JCAssign) expr).rhs;
+							} else {
+								addError(errorName, annotationNode);
+							}
+						}
+						
+						if (expr instanceof JCAnnotation) {
+							result.append((JCAnnotation) expr);
+						} else if (expr instanceof JCNewArray) {
+							for (JCExpression expr2 : ((JCNewArray) expr).elems) {
+								if (expr2 instanceof JCAnnotation) {
+									result.append((JCAnnotation) expr2);
+								} else {
+									addError(errorName, annotationNode);
+									continue outer;
+								}
+							}
 						} else {
-							annotationNode.addError("The correct format is " + errorName + "@__({@SomeAnnotation, @SomeOtherAnnotation}))");
+							addError(errorName, annotationNode);
 							continue outer;
 						}
 					}
-					
-					if (expr instanceof JCAnnotation) {
-						result.append((JCAnnotation) expr);
-					} else if (expr instanceof JCNewArray) {
-						for (JCExpression expr2 : ((JCNewArray) expr).elems) {
-							if (expr2 instanceof JCAnnotation) {
-								result.append((JCAnnotation) expr2);
-							} else {
-								annotationNode.addError("The correct format is " + errorName + "@__({@SomeAnnotation, @SomeOtherAnnotation}))");
-								continue outer;
-							}
-						}
-					} else {
-						annotationNode.addError("The correct format is " + errorName + "@__({@SomeAnnotation, @SomeOtherAnnotation}))");
-						continue outer;
+				}
+			} else if (valueOfParam instanceof JCNewArray) {
+				JCNewArray arr = (JCNewArray) valueOfParam;
+				if (arr.elems.isEmpty()) {
+					// Just remove it, this is always fine.
+				} else if (allowRaw) {
+					for (JCExpression jce : arr.elems) {
+						if (jce instanceof JCAnnotation) result.append((JCAnnotation) jce);
+						else addError(errorName, annotationNode);
 					}
+				} else {
+					addError(errorName, annotationNode);
 				}
 			} else {
-				if (valueOfParam instanceof JCNewArray && ((JCNewArray) valueOfParam).elems.isEmpty()) {
-					// Then we just remove it and move on (it's onMethod={} for example).
-				} else {
-					annotationNode.addError("The correct format is " + errorName + "@__({@SomeAnnotation, @SomeOtherAnnotation}))");
-				}
+				addError(errorName, annotationNode);
 			}
 		}
 		ast.args = params.toList();
 		return result.toList();
 	}
 	
-	public static List<JCTypeParameter> copyTypeParams(JavacTreeMaker maker, List<JCTypeParameter> params) {
+	private static void addError(String errorName, JavacNode node) {
+		if (node.getLatestJavaSpecSupported() < 8) {
+			node.addError("The correct format up to JDK7 is " + errorName + "=@__({@SomeAnnotation, @SomeOtherAnnotation}))");
+		} else {
+			node.addError("The correct format for JDK8+ is " + errorName + "_={@SomeAnnotation, @SomeOtherAnnotation})");
+		}
+	}
+	
+	public static List<JCTypeParameter> copyTypeParams(JavacNode source, List<JCTypeParameter> params) {
 		if (params == null || params.isEmpty()) return params;
 		ListBuffer<JCTypeParameter> out = new ListBuffer<JCTypeParameter>();
-		for (JCTypeParameter tp : params) out.append(maker.TypeParameter(tp.name, tp.bounds));
+		JavacTreeMaker maker = source.getTreeMaker();
+		Context context = source.getContext();
+		for (JCTypeParameter tp : params) {
+			List<JCExpression> bounds = tp.bounds;
+			if (bounds != null && !bounds.isEmpty()) {
+				ListBuffer<JCExpression> boundsCopy = new ListBuffer<JCExpression>();
+				for (JCExpression expr : tp.bounds) {
+					boundsCopy.append(cloneType(maker, expr, source.get(), context));
+				}
+				bounds = boundsCopy.toList();
+			}
+			out.append(maker.TypeParameter(tp.name, bounds));
+		}
 		return out.toList();
 	}
 	

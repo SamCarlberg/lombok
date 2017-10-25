@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 The Project Lombok Authors.
+ * Copyright (C) 2015-2017 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -37,6 +37,7 @@ import lombok.javac.handlers.JavacSingularsRecipes.SingularData;
 import org.mangosdk.spi.ProviderFor;
 
 import com.sun.tools.javac.code.Flags;
+import com.sun.tools.javac.code.Symtab;
 import com.sun.tools.javac.tree.JCTree;
 import com.sun.tools.javac.tree.JCTree.JCBlock;
 import com.sun.tools.javac.tree.JCTree.JCExpression;
@@ -100,29 +101,31 @@ public class JavacJavaUtilMapSingularizer extends JavacJavaUtilSingularizer {
 		return Arrays.asList(keyFieldNode, valueFieldNode);
 	}
 	
-	@Override public void generateMethods(SingularData data, JavacNode builderType, JCTree source, boolean fluent, boolean chain) {
+	@Override public void generateMethods(SingularData data, boolean deprecate, JavacNode builderType, JCTree source, boolean fluent, boolean chain) {
 		if (useGuavaInstead(builderType)) {
-			guavaMapSingularizer.generateMethods(data, builderType, source, fluent, chain);
+			guavaMapSingularizer.generateMethods(data, deprecate, builderType, source, fluent, chain);
 			return;
 		}
 		
 		JavacTreeMaker maker = builderType.getTreeMaker();
+		Symtab symbolTable = builderType.getSymbolTable();
 		
-		JCExpression returnType = chain ? cloneSelfType(builderType) : maker.Type(createVoidType(maker, CTC_VOID));
+		JCExpression returnType = chain ? cloneSelfType(builderType) : maker.Type(createVoidType(symbolTable, CTC_VOID));
 		JCStatement returnStatement = chain ? maker.Return(maker.Ident(builderType.toName("this"))) : null;
-		generateSingularMethod(maker, returnType, returnStatement, data, builderType, source, fluent);
+		generateSingularMethod(deprecate, maker, returnType, returnStatement, data, builderType, source, fluent);
 		
-		returnType = chain ? cloneSelfType(builderType) : maker.Type(createVoidType(maker, CTC_VOID));
+		returnType = chain ? cloneSelfType(builderType) : maker.Type(createVoidType(symbolTable, CTC_VOID));
 		returnStatement = chain ? maker.Return(maker.Ident(builderType.toName("this"))) : null;
-		generatePluralMethod(maker, returnType, returnStatement, data, builderType, source, fluent);
+		generatePluralMethod(deprecate, maker, returnType, returnStatement, data, builderType, source, fluent);
 		
-		returnType = chain ? cloneSelfType(builderType) : maker.Type(createVoidType(maker, CTC_VOID));
+		returnType = chain ? cloneSelfType(builderType) : maker.Type(createVoidType(symbolTable, CTC_VOID));
 		returnStatement = chain ? maker.Return(maker.Ident(builderType.toName("this"))) : null;
-		generateClearMethod(maker, returnType, returnStatement, data, builderType, source);
+		generateClearMethod(deprecate, maker, returnType, returnStatement, data, builderType, source);
 	}
 	
-	private void generateClearMethod(JavacTreeMaker maker, JCExpression returnType, JCStatement returnStatement, SingularData data, JavacNode builderType, JCTree source) {
-		JCModifiers mods = maker.Modifiers(Flags.PUBLIC);
+	private void generateClearMethod(boolean deprecate, JavacTreeMaker maker, JCExpression returnType, JCStatement returnStatement, SingularData data, JavacNode builderType, JCTree source) {
+		JCModifiers mods = makeMods(maker, builderType, deprecate);
+		
 		List<JCTypeParameter> typeParams = List.nil();
 		List<JCExpression> thrown = List.nil();
 		List<JCVariableDecl> params = List.nil();
@@ -144,10 +147,11 @@ public class JavacJavaUtilMapSingularizer extends JavacJavaUtilSingularizer {
 		injectMethod(builderType, method);
 	}
 	
-	private void generateSingularMethod(JavacTreeMaker maker, JCExpression returnType, JCStatement returnStatement, SingularData data, JavacNode builderType, JCTree source, boolean fluent) {
+	private void generateSingularMethod(boolean deprecate, JavacTreeMaker maker, JCExpression returnType, JCStatement returnStatement, SingularData data, JavacNode builderType, JCTree source, boolean fluent) {
 		List<JCTypeParameter> typeParams = List.nil();
 		List<JCExpression> thrown = List.nil();
-		JCModifiers mods = maker.Modifiers(Flags.PUBLIC);
+		JCModifiers mods = makeMods(maker, builderType, deprecate);
+		
 		ListBuffer<JCStatement> statements = new ListBuffer<JCStatement>();
 		statements.append(createConstructBuilderVarIfNeeded(maker, data, builderType, true, source));
 		Name keyName = builderType.toName(data.getSingularName().toString() + "Key");
@@ -176,10 +180,10 @@ public class JavacJavaUtilMapSingularizer extends JavacJavaUtilSingularizer {
 		injectMethod(builderType, method);
 	}
 
-	private void generatePluralMethod(JavacTreeMaker maker, JCExpression returnType, JCStatement returnStatement, SingularData data, JavacNode builderType, JCTree source, boolean fluent) {
+	private void generatePluralMethod(boolean deprecate, JavacTreeMaker maker, JCExpression returnType, JCStatement returnStatement, SingularData data, JavacNode builderType, JCTree source, boolean fluent) {
 		List<JCTypeParameter> typeParams = List.nil();
 		List<JCExpression> jceBlank = List.nil();
-		JCModifiers mods = maker.Modifiers(Flags.PUBLIC);
+		JCModifiers mods = makeMods(maker, builderType, deprecate);
 		ListBuffer<JCStatement> statements = new ListBuffer<JCStatement>();
 		statements.append(createConstructBuilderVarIfNeeded(maker, data, builderType, true, source));
 		long paramFlags = JavacHandlerUtil.addFinalIfNeeded(Flags.PARAMETER, builderType.getContext());

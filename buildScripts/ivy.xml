@@ -15,7 +15,7 @@
 		<conf name="javac7" />
 	</configurations>
 	<dependencies>
-		<dependency org="org.projectlombok" name="lombok.patcher" rev="0.20" conf="buildBase->default; runtime->default" />
+		<dependency org="org.projectlombok" name="lombok.patcher" rev="0.22" conf="buildBase->default; runtime->default" />
 		<dependency org="zwitserloot.com" name="cmdreader" rev="1.2" conf="buildBase->runtime; runtime" />
 		
 		<dependency org="junit" name="junit" rev="4.8.2" conf="test->default; contrib->sources" />
@@ -35,6 +35,7 @@
 		<dependency org="projectlombok.org" name="jsch-ant-fixed" rev="0.1.42" conf="buildBase->build" />
 		<dependency org="projectlombok.org" name="markdownj" rev="1.02b4" conf="buildBase->build" />
 		<dependency org="de.java2html" name="java2html" rev="5.0" conf="buildBase->default" />
+		<dependency org="org.freemarker" name="freemarker" rev="2.3.25-incubating" conf="buildBase->default" />
 		
 		<dependency org="net.java.openjdk.custom" name="javac6" rev="1.6.0.18" conf="javac6->runtime; contrib->sources" />
 		<dependency org="net.java.openjdk.custom" name="javac7" rev="1.7.0" conf="javac7->runtime; contrib->sources" />

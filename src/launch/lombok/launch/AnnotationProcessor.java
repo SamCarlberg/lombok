@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 The Project Lombok Authors.
+ * Copyright (C) 2014-2017 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -27,13 +27,28 @@ import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Completion;
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.annotation.processing.RoundEnvironment;
+import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.TypeMirror;
+
+import org.mapstruct.ap.spi.AstModifyingAnnotationProcessor;
 
 class AnnotationProcessorHider {
+	public static class AstModificationNotifier implements AstModifyingAnnotationProcessor {
+		@Override public boolean isTypeComplete(TypeMirror type) {
+			if (System.getProperty("lombok.disable") != null) return true;
+			return AstModificationNotifierData.lombokInvoked;
+		}
+	}
+	
+	static class AstModificationNotifierData {
+		volatile static boolean lombokInvoked = false;
+	}
+	
 	public static class AnnotationProcessor extends AbstractProcessor {
 		private final AbstractProcessor instance = createWrappedInstance();
 		
@@ -50,6 +65,7 @@ class AnnotationProcessorHider {
 		}
 		
 		@Override public void init(ProcessingEnvironment processingEnv) {
+			AstModificationNotifierData.lombokInvoked = true;
 			instance.init(processingEnv);
 			super.init(processingEnv);
 		}
@@ -72,6 +88,17 @@ class AnnotationProcessorHider {
 				if (t instanceof RuntimeException) throw (RuntimeException) t;
 				throw new RuntimeException(t);
 			}
+		}
+	}
+	
+	@SupportedAnnotationTypes("lombok.*")
+	public static class ClaimingProcessor extends AbstractProcessor {
+		@Override public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+			return true;
+		}
+		
+		@Override public SourceVersion getSupportedSourceVersion() {
+			return SourceVersion.latest();
 		}
 	}
 }

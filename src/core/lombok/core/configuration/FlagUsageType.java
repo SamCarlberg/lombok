@@ -23,5 +23,5 @@ package lombok.core.configuration;
 
 /** Used for lombok configuration to flag usages of certain lombok feature. */
 public enum FlagUsageType {
-	WARNING, ERROR;
+	WARNING, ERROR, ALLOW;
 }
